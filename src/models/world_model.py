@@ -13,6 +13,7 @@ from .tokenizer import Tokenizer
 from .vectoriser import Vectoriser
 from .transformer import Transformer, TransformerConfig
 from utils import init_weights, LossWithIntermediateLosses, compute_lambda_returns
+from torch.distributions.categorical import Categorical
 
 
 @dataclass
@@ -220,16 +221,30 @@ class WorldModel(nn.Module):
         loss_rewards = F.cross_entropy(rearrange(outputs.logits_rewards, 'b t e -> (b t) e'), labels_rewards)
         loss_ends = F.cross_entropy(rearrange(outputs.logits_ends, 'b t e -> (b t) e'), labels_ends)
 
+        values = outputs.values.squeeze(-1)
+
         # RL loss
         lambda_returns = compute_lambda_returns(
             rewards=batch['rewards'],
-            values=outputs.values,
+            values=values,
             ends=batch['ends'],
             gamma=gamma,
             lambda_=lambda_,
-        )
+        ) # shape: B, L
 
-        lambda_returns = lambda_returns[:, :-1]
+        lambda_returns = lambda_returns.reshape(B*L)
+        mask_padding = mask_padding.reshape(B*L)
+        lambda_returns = lambda_returns[mask_padding]
+        logits_actions = outputs.logits_actions.reshape(B*L, -1)[mask_padding]
+        values = values.reshape(B*L)[mask_padding]
+        actions = Categorical(logits=logits_actions).sample()
+
+        d = Categorical(logits=logits_actions)
+        log_probs = d.log_prob(actions)
+        loss_actions = -1 * (log_probs * (lambda_returns - values.detach())).mean()
+        loss_entropy = - entropy_weight * d.entropy().mean()
+        loss_values = F.mse_loss(values, lambda_returns)
 
 
-        return LossWithIntermediateLosses(loss_obs=loss_obs, loss_rewards=loss_rewards, loss_ends=loss_ends)
+        return LossWithIntermediateLosses(loss_obs=loss_obs, loss_rewards=loss_rewards, loss_ends=loss_ends,
+                    loss_actions=loss_actions, loss_entropy=loss_entropy, loss_values=loss_values)
