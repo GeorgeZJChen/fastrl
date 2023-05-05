@@ -6,7 +6,7 @@ import torchvision.transforms as T
 class Vectoriser(nn.Module):
     def __init__(self) -> None:
         super().__init__()
-        weights = ResNet18_Weights.IMAGENET1K_V2
+        weights = ResNet18_Weights.DEFAULT
         # preprocess = weights.transforms()
         res18 = resnet18(weights=weights)
 

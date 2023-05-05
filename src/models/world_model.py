@@ -12,7 +12,7 @@ from .slicer import Embedder, Head
 from .tokenizer import Tokenizer
 from .vectoriser import Vectoriser
 from .transformer import Transformer, TransformerConfig
-from utils import init_weights, LossWithIntermediateLosses
+from utils import init_weights, LossWithIntermediateLosses, compute_lambda_returns
 
 
 @dataclass
