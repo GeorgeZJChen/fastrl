@@ -40,6 +40,8 @@ class WorldModel(nn.Module):
         act_tokens_pattern[-1] = 1
         obs_tokens_pattern = 1 - act_tokens_pattern
 
+        self.embed_dim = config.embed_dim
+
         self.pos_emb = nn.Embedding(config.max_tokens, config.embed_dim)
         self.act_embedder = nn.Embedding(act_vocab_size, config.embed_dim)
 
@@ -107,7 +109,7 @@ class WorldModel(nn.Module):
 
     def compute_loss(self, batch: Batch, tokenizer: Tokenizer, **kwargs: Any) -> LossWithIntermediateLosses:
 
-        return compute_loss_rl(batch, tokenizer)
+        return self.compute_loss_rl(batch)
 
         with torch.no_grad():
             obs_tokens = tokenizer.encode(batch['observations'], should_preprocess=True).tokens  # (BL, K)
@@ -135,6 +137,13 @@ class WorldModel(nn.Module):
         labels_rewards = (rewards.sign() + 1).masked_fill(mask_fill, -100).long()  # Rewards clipped to {-1, 0, 1}
         labels_ends = ends.masked_fill(mask_fill, -100)
         return labels_observations.reshape(-1), labels_rewards.reshape(-1), labels_ends.reshape(-1)
+
+    def compute_labels_world_model_rl(self, rewards: torch.Tensor, ends: torch.Tensor, mask_padding: torch.BoolTensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        assert torch.all(ends.sum(dim=1) <= 1)  # at most 1 done
+        mask_fill = torch.logical_not(mask_padding)
+        labels_rewards = (rewards.sign() + 1).masked_fill(mask_fill, -100).long()  # Rewards clipped to {-1, 0, 1}
+        labels_ends = ends.masked_fill(mask_fill, -100)
+        return labels_rewards.reshape(-1), labels_ends.reshape(-1)
 
     def compute_loss_rl(self, batch: Batch, **kwargs: Any) -> LossWithIntermediateLosses:
         # with torch.no_grad():
@@ -167,22 +176,22 @@ class WorldModel(nn.Module):
 
         outputs = self(sequences)
 
-        labels_observations, labels_rewards, labels_ends = self.compute_labels_world_model(obs_tokens, batch['rewards'], batch['ends'], batch['mask_padding'])
+        labels_rewards, labels_ends = self.compute_labels_world_model_rl(batch['rewards'], batch['ends'], batch['mask_padding'])
 
-        logits_observations = rearrange(outputs.logits_observations[:, :-1], 'b t o -> (b t) o')
+        # logits_observations = rearrange(outputs.logits_observations[:, :-1], 'b t o -> (b t) o')
+        logits_observations = outputs.logits_observations[:, :-1]
         labels_observations = outputs.logits_observations[:, 1:]
 
         mask_padding = batch['mask_padding'] # shape: B, L
-        mask_padding = mask_padding[:, :-1]
         loss_obs = (labels_observations - logits_observations).pow(2).mean(dim=-1)
 
         mask_fill = torch.logical_not(mask_padding)
-        # expand
-        loss_obs = loss_obs.view(B, L, -1)
-        loss_obs = loss_obs.masked_fill(mask_fill.unsqueeze(-1), 0)
+        mask_fill = mask_fill.unsqueeze(-1).expand(-1, -1, self.config.tokens_per_block-1)
+        mask_fill = mask_fill.reshape(B, -1)[:, :-1]
+
+        loss_obs = loss_obs.masked_fill(mask_fill, 0)
         loss_obs = loss_obs.sum() / mask_padding.int().sum()
 
-        # loss_obs = F.cross_entropy(logits_observations, labels_observations)
         loss_rewards = F.cross_entropy(rearrange(outputs.logits_rewards, 'b t e -> (b t) e'), labels_rewards)
         loss_ends = F.cross_entropy(rearrange(outputs.logits_ends, 'b t e -> (b t) e'), labels_ends)
 

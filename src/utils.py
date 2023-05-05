@@ -32,6 +32,8 @@ def configure_optimizer(model, learning_rate, weight_decay, *blacklist_module_na
             elif pn.endswith('weight') and isinstance(m, blacklist_weight_modules):
                 # weights of blacklist modules will NOT be weight decayed
                 no_decay.add(fpn)
+            elif 'vectoriser' in pn:
+                decay.add(fpn)
 
     # validate that we considered every parameter
     param_dict = {pn: p for pn, p in model.named_parameters()}
