@@ -10,6 +10,7 @@ from dataset import Batch
 from .kv_caching import KeysValues
 from .slicer import Embedder, Head
 from .tokenizer import Tokenizer
+from .vectoriser import Vectoriser
 from .transformer import Transformer, TransformerConfig
 from utils import init_weights, LossWithIntermediateLosses
 
@@ -29,6 +30,10 @@ class WorldModel(nn.Module):
         self.config = config
         self.transformer = Transformer(config)
 
+        self.vectoriser = Vectoriser()
+        self.vec_size = 512 // (self.config.tokens_per_block - 1)
+        self.obs_map = nn.Linear(self.vec_size, config.embed_dim)
+
         all_but_last_obs_tokens_pattern = torch.ones(config.tokens_per_block)
         all_but_last_obs_tokens_pattern[-2] = 0 # why but last obs, a walkaround for actor_critic.imagine
         act_tokens_pattern = torch.zeros(self.config.tokens_per_block)
@@ -36,11 +41,12 @@ class WorldModel(nn.Module):
         obs_tokens_pattern = 1 - act_tokens_pattern
 
         self.pos_emb = nn.Embedding(config.max_tokens, config.embed_dim)
+        self.act_embedder = nn.Embedding(act_vocab_size, config.embed_dim)
 
         self.embedder = Embedder(
             max_blocks=config.max_blocks,
             block_masks=[act_tokens_pattern, obs_tokens_pattern],
-            embedding_tables=nn.ModuleList([nn.Embedding(act_vocab_size, config.embed_dim), nn.Embedding(obs_vocab_size, config.embed_dim)])
+            embedding_tables=nn.ModuleList([self.act_embedder, nn.Embedding(obs_vocab_size, config.embed_dim)])
         )
 
         self.head_observations = Head(
@@ -51,7 +57,8 @@ class WorldModel(nn.Module):
             head_module=nn.Sequential(
                 nn.Linear(config.embed_dim, config.embed_dim),
                 nn.ReLU(),
-                nn.Linear(config.embed_dim, obs_vocab_size)
+                # nn.Linear(config.embed_dim, obs_vocab_size)
+                nn.Linear(config.embed_dim, config.embed_dim)
             )
         )
 
@@ -80,13 +87,15 @@ class WorldModel(nn.Module):
     def __repr__(self) -> str:
         return "world_model"
 
-    def forward(self, tokens: torch.LongTensor, past_keys_values: Optional[KeysValues] = None) -> WorldModelOutput:
+    # def forward(self, tokens: torch.LongTensor, past_keys_values: Optional[KeysValues] = None) -> WorldModelOutput:
+    def forward(self, sequences: torch.FloatTensor, past_keys_values: Optional[KeysValues] = None) -> WorldModelOutput:
 
-        num_steps = tokens.size(1)  # (B, T)
+        # num_steps = tokens.size(1)  # (B, T)
+        num_steps = sequences.size(1)  # (B, T)
         assert num_steps <= self.config.max_tokens
         prev_steps = 0 if past_keys_values is None else past_keys_values.size
 
-        sequences = self.embedder(tokens, num_steps, prev_steps) + self.pos_emb(prev_steps + torch.arange(num_steps, device=tokens.device))
+        # sequences = self.embedder(tokens, num_steps, prev_steps) + self.pos_emb(prev_steps + torch.arange(num_steps, device=tokens.device))
 
         x = self.transformer(sequences, past_keys_values)
 
@@ -97,6 +106,8 @@ class WorldModel(nn.Module):
         return WorldModelOutput(x, logits_observations, logits_rewards, logits_ends)
 
     def compute_loss(self, batch: Batch, tokenizer: Tokenizer, **kwargs: Any) -> LossWithIntermediateLosses:
+
+        return compute_loss_rl(batch, tokenizer)
 
         with torch.no_grad():
             obs_tokens = tokenizer.encode(batch['observations'], should_preprocess=True).tokens  # (BL, K)
@@ -119,24 +130,59 @@ class WorldModel(nn.Module):
     def compute_labels_world_model(self, obs_tokens: torch.Tensor, rewards: torch.Tensor, ends: torch.Tensor, mask_padding: torch.BoolTensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         assert torch.all(ends.sum(dim=1) <= 1)  # at most 1 done
         mask_fill = torch.logical_not(mask_padding)
-        labels_observations = rearrange(obs_tokens.masked_fill(mask_fill.unsqueeze(-1).expand_as(obs_tokens), -100), 'b t k -> b (t k)')[:, 1:]
+        labels_observations = rearrange(obs_tokens.masked_fill(mask_fill.unsqueeze(-1).expand_as(obs_tokens), -100)
+            , 'b t k -> b (t k)')[:, 1:]
         labels_rewards = (rewards.sign() + 1).masked_fill(mask_fill, -100).long()  # Rewards clipped to {-1, 0, 1}
         labels_ends = ends.masked_fill(mask_fill, -100)
         return labels_observations.reshape(-1), labels_rewards.reshape(-1), labels_ends.reshape(-1)
 
-    def compute_loss_rl(self, batch: Batch, tokenizer: Tokenizer, **kwargs: Any) -> LossWithIntermediateLosses:
-        with torch.no_grad():
-            obs_tokens = tokenizer.encode(batch['observations'], should_preprocess=True).tokens  # (BL, K)
+    def compute_loss_rl(self, batch: Batch, **kwargs: Any) -> LossWithIntermediateLosses:
+        # with torch.no_grad():
+        #     obs_tokens = tokenizer.encode(batch['observations'], should_preprocess=True).tokens  # (BL, K)
 
-        act_tokens = rearrange(batch['actions'], 'b l -> b l 1')
-        tokens = rearrange(torch.cat((obs_tokens, act_tokens), dim=2), 'b l k1 -> b (l k1)')  # (B, L(K+1))
+        obs = batch['observations'].float()
+        B = obs.size(0)
+        L = obs.size(1)
+        obs = obs.view(B*L, obs.size(2), obs.size(3), obs.size(4))
+        obs_vector = self.vectoriser(obs)
 
-        outputs = self(tokens)
+        obs_vectors = obs_vector.view(B, L, self.config.tokens_per_block-1, self.vec_size)
+
+        obs_vectors_mapped = self.obs_map(obs_vectors)
+
+        act_tokens = batch['actions']
+        act_vec = self.act_embedder(act_tokens) # shape: B, L, D
+        act_vec = act_vec.view(B, L, 1, self.embed_dim)
+
+        sequences = torch.cat((obs_vectors_mapped, act_vec), dim=2)
+        sequences = sequences.view(B, L*self.config.tokens_per_block, self.embed_dim)
+
+        # act_tokens = rearrange(batch['actions'], 'b l -> b l 1')
+        # tokens = rearrange(torch.cat((obs_tokens, act_tokens), dim=2), 'b l k1 -> b (l k1)')  # (B, L(K+1))
+
+        # >>> DEBUG log obs torch.Size([10, 320, 512])
+        # >>> DEBUG mask torch.Size([10, 20])
+        # >>> DEBUG rewards torch.Size([10, 20])
+        # >>> DEBUG ends torch.Size([10, 20])
+
+        outputs = self(sequences)
 
         labels_observations, labels_rewards, labels_ends = self.compute_labels_world_model(obs_tokens, batch['rewards'], batch['ends'], batch['mask_padding'])
 
         logits_observations = rearrange(outputs.logits_observations[:, :-1], 'b t o -> (b t) o')
-        loss_obs = F.cross_entropy(logits_observations, labels_observations)
+        labels_observations = outputs.logits_observations[:, 1:]
+
+        mask_padding = batch['mask_padding'] # shape: B, L
+        mask_padding = mask_padding[:, :-1]
+        loss_obs = (labels_observations - logits_observations).pow(2).mean(dim=-1)
+
+        mask_fill = torch.logical_not(mask_padding)
+        # expand
+        loss_obs = loss_obs.view(B, L, -1)
+        loss_obs = loss_obs.masked_fill(mask_fill.unsqueeze(-1), 0)
+        loss_obs = loss_obs.sum() / mask_padding.int().sum()
+
+        # loss_obs = F.cross_entropy(logits_observations, labels_observations)
         loss_rewards = F.cross_entropy(rearrange(outputs.logits_rewards, 'b t e -> (b t) e'), labels_rewards)
         loss_ends = F.cross_entropy(rearrange(outputs.logits_ends, 'b t e -> (b t) e'), labels_ends)
 

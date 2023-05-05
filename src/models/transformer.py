@@ -91,6 +91,7 @@ class SelfAttention(nn.Module):
         causal_mask = torch.tril(torch.ones(config.max_tokens, config.max_tokens))
         block_causal_mask = torch.max(causal_mask, torch.block_diag(*[torch.ones(config.tokens_per_block, config.tokens_per_block) for _ in range(config.max_blocks)]))
         self.register_buffer('mask', causal_mask if config.attention == 'causal' else block_causal_mask)
+        # mask shape: (seq_len, seq_len), (340, 340) 340: 17*20
 
     def forward(self, x: torch.Tensor, kv_cache: Optional[KVCache] = None) -> torch.Tensor:
         B, T, C = x.size()
