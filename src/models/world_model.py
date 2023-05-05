@@ -21,6 +21,8 @@ class WorldModelOutput:
     logits_observations: torch.FloatTensor
     logits_rewards: torch.FloatTensor
     logits_ends: torch.FloatTensor
+    logits_actions: torch.FloatTensor
+    values: torch.FloatTensor
 
 
 class WorldModel(nn.Module):
@@ -84,6 +86,26 @@ class WorldModel(nn.Module):
             )
         )
 
+        self.head_actions = Head(
+            max_blocks=config.max_blocks,
+            block_mask=act_tokens_pattern,
+            head_module=nn.Sequential(
+                nn.Linear(config.embed_dim, config.embed_dim),
+                nn.ReLU(),
+                nn.Linear(config.embed_dim, act_vocab_size)
+            )
+        )
+
+        self.head_values = Head(
+            max_blocks=config.max_blocks,
+            block_mask=act_tokens_pattern,
+            head_module=nn.Sequential(
+                nn.Linear(config.embed_dim, config.embed_dim),
+                nn.ReLU(),
+                nn.Linear(config.embed_dim, 1)
+            )
+        )
+
         self.apply(init_weights)
 
     def __repr__(self) -> str:
@@ -104,12 +126,14 @@ class WorldModel(nn.Module):
         logits_observations = self.head_observations(x, num_steps=num_steps, prev_steps=prev_steps)
         logits_rewards = self.head_rewards(x, num_steps=num_steps, prev_steps=prev_steps)
         logits_ends = self.head_ends(x, num_steps=num_steps, prev_steps=prev_steps)
+        logits_actions = self.head_actions(x, num_steps=num_steps, prev_steps=prev_steps)
+        values = self.head_values(x, num_steps=num_steps, prev_steps=prev_steps)
 
-        return WorldModelOutput(x, logits_observations, logits_rewards, logits_ends)
+        return WorldModelOutput(x, logits_observations, logits_rewards, logits_ends, logits_actions, values)
 
     def compute_loss(self, batch: Batch, tokenizer: Tokenizer, **kwargs: Any) -> LossWithIntermediateLosses:
 
-        return self.compute_loss_rl(batch)
+        return self.compute_loss_rl(batch, **kwargs)
 
         with torch.no_grad():
             obs_tokens = tokenizer.encode(batch['observations'], should_preprocess=True).tokens  # (BL, K)
@@ -145,7 +169,7 @@ class WorldModel(nn.Module):
         labels_ends = ends.masked_fill(mask_fill, -100)
         return labels_rewards.reshape(-1), labels_ends.reshape(-1)
 
-    def compute_loss_rl(self, batch: Batch, **kwargs: Any) -> LossWithIntermediateLosses:
+    def compute_loss_rl(self, batch: Batch, gamma: float, lambda_: float, entropy_weight: float, **kwargs: Any) -> LossWithIntermediateLosses:
         # with torch.no_grad():
         #     obs_tokens = tokenizer.encode(batch['observations'], should_preprocess=True).tokens  # (BL, K)
 
@@ -183,7 +207,8 @@ class WorldModel(nn.Module):
         labels_observations = outputs.logits_observations[:, 1:]
 
         mask_padding = batch['mask_padding'] # shape: B, L
-        loss_obs = (labels_observations - logits_observations).pow(2).mean(dim=-1)
+        # loss_obs = (labels_observations - logits_observations).pow(2).mean(dim=-1)
+        loss_obs = 1 - F.cosine_similarity(logits_observations, labels_observations, dim=-1)
 
         mask_fill = torch.logical_not(mask_padding)
         mask_fill = mask_fill.unsqueeze(-1).expand(-1, -1, self.config.tokens_per_block-1)
@@ -194,5 +219,17 @@ class WorldModel(nn.Module):
 
         loss_rewards = F.cross_entropy(rearrange(outputs.logits_rewards, 'b t e -> (b t) e'), labels_rewards)
         loss_ends = F.cross_entropy(rearrange(outputs.logits_ends, 'b t e -> (b t) e'), labels_ends)
+
+        # RL loss
+        lambda_returns = compute_lambda_returns(
+            rewards=batch['rewards'],
+            values=outputs.values,
+            ends=batch['ends'],
+            gamma=gamma,
+            lambda_=lambda_,
+        )
+
+        lambda_returns = lambda_returns[:, :-1]
+
 
         return LossWithIntermediateLosses(loss_obs=loss_obs, loss_rewards=loss_rewards, loss_ends=loss_ends)
