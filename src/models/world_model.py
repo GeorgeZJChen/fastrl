@@ -15,6 +15,8 @@ from .transformer import Transformer, TransformerConfig
 from utils import init_weights, LossWithIntermediateLosses, compute_lambda_returns
 from torch.distributions.categorical import Categorical
 
+def to_float(t):
+    return float(t.detach().cpu().numpy())
 
 @dataclass
 class WorldModelOutput:
@@ -108,6 +110,8 @@ class WorldModel(nn.Module):
         )
 
         self.apply(init_weights)
+
+        self.training_step = 0
 
     def __repr__(self) -> str:
         return "world_model"
@@ -242,9 +246,14 @@ class WorldModel(nn.Module):
         d = Categorical(logits=logits_actions)
         log_probs = d.log_prob(actions)
         loss_actions = -1 * (log_probs * (lambda_returns - values.detach())).mean()
-        loss_entropy = - entropy_weight * d.entropy().mean()
+        entropy = d.entropy().mean()
+        loss_entropy = - entropy_weight * entropy
         loss_values = F.mse_loss(values, lambda_returns)
 
+        if self.training_step % 10 == 0:
+            print('>>> Training loss:', 'obs:', to_float(loss_obs), 'entropy:', to_float(entropy))
+
+        self.training_step += 1
 
         return LossWithIntermediateLosses(loss_obs=loss_obs, loss_rewards=loss_rewards, loss_ends=loss_ends,
                     loss_actions=loss_actions, loss_entropy=loss_entropy, loss_values=loss_values)

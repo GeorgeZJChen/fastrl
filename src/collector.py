@@ -45,13 +45,15 @@ class Collector:
             burnin_obs = torch.stack([episode.observations for episode in segmented_episodes], dim=0).float().div(255).to(agent.device)
             burnin_obs_rec = torch.clamp(agent.tokenizer.encode_decode(burnin_obs, should_preprocess=True, should_postprocess=True), 0, 1)
 
-        agent.actor_critic.reset(n=self.env.num_envs, burnin_observations=burnin_obs_rec, mask_padding=mask_padding)
+        # agent.actor_critic.reset(n=self.env.num_envs, burnin_observations=burnin_obs_rec, mask_padding=mask_padding)
         pbar = tqdm(total=num_steps if num_steps is not None else num_episodes, desc=f'Experience collection ({self.dataset.name})', file=sys.stdout)
 
         while not should_stop(steps, episodes):
 
             observations.append(self.obs)
-            obs = rearrange(torch.FloatTensor(self.obs).div(255), 'n h w c -> n c h w').to(agent.device)
+            assert self.obs.shape[0] == 1
+            # obs = rearrange(torch.FloatTensor(self.obs).div(255), 'n h w c -> n c h w').to(agent.device)
+            obs = rearrange(torch.ByteTensor(self.obs), 'n h w c -> n c h w').to(agent.device)
             act = agent.act(obs, should_sample=should_sample, temperature=temperature).cpu().numpy()
 
             if random.random() < epsilon:
