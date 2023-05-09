@@ -42,7 +42,7 @@ class WorldModel(nn.Module):
         all_but_last_obs_tokens_pattern = torch.ones(config.tokens_per_block)
         all_but_last_obs_tokens_pattern[-2] = 0 # why but last obs, a walkaround for actor_critic.imagine
         act_tokens_pattern = torch.zeros(self.config.tokens_per_block)
-        act_tokens_pattern[-1] = 1
+        act_tokens_pattern[-2] = 1
         obs_tokens_pattern = 1 - act_tokens_pattern
 
         self.embed_dim = config.embed_dim
@@ -116,6 +116,16 @@ class WorldModel(nn.Module):
     def __repr__(self) -> str:
         return "world_model"
 
+    def obs_to_vectors(self, obs: torch.ByteTensor):
+        assert obs.ndim == 5
+        B = obs.size(0)
+        L = obs.size(1)
+        obs = obs.view(B*L, obs.size(2), obs.size(3), obs.size(4))
+        obs_vector = self.world_model.vectoriser(obs)
+        obs_vectors = obs_vector.view(B, L, self.world_model.config.tokens_per_block-1, self.world_model.vec_size)
+        obs_vectors_mapped = self.world_model.obs_map(obs_vectors)
+        return obs_vectors_mapped
+
     # def forward(self, tokens: torch.LongTensor, past_keys_values: Optional[KeysValues] = None) -> WorldModelOutput:
     def forward(self, sequences: torch.FloatTensor, past_keys_values: Optional[KeysValues] = None) -> WorldModelOutput:
 
@@ -178,15 +188,11 @@ class WorldModel(nn.Module):
         # with torch.no_grad():
         #     obs_tokens = tokenizer.encode(batch['observations'], should_preprocess=True).tokens  # (BL, K)
 
-        obs = batch['observations'].float()
+        obs = batch['observations']
         B = obs.size(0)
         L = obs.size(1)
-        obs = obs.view(B*L, obs.size(2), obs.size(3), obs.size(4))
-        obs_vector = self.vectoriser(obs)
 
-        obs_vectors = obs_vector.view(B, L, self.config.tokens_per_block-1, self.vec_size)
-
-        obs_vectors_mapped = self.obs_map(obs_vectors)
+        obs_vectors_mapped = self.obs_to_vectors(obs)
 
         act_tokens = batch['actions']
         act_vec = self.act_embedder(act_tokens) # shape: B, L, D
