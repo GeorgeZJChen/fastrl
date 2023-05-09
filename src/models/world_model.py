@@ -42,7 +42,9 @@ class WorldModel(nn.Module):
         all_but_last_obs_tokens_pattern = torch.ones(config.tokens_per_block)
         all_but_last_obs_tokens_pattern[-2] = 0 # why but last obs, a walkaround for actor_critic.imagine
         act_tokens_pattern = torch.zeros(self.config.tokens_per_block)
-        act_tokens_pattern[-2] = 1
+        act_tokens_pattern[-1] = 1
+        act_head_tokens_pattern = torch.zeros(self.config.tokens_per_block)
+        act_head_tokens_pattern[-2] = 1
         obs_tokens_pattern = torch.ones(self.config.tokens_per_block)
         obs_tokens_pattern[-1] = 0
         reward_tokens_pattern = torch.zeros(self.config.tokens_per_block)
@@ -94,7 +96,7 @@ class WorldModel(nn.Module):
 
         self.head_actions = Head(
             max_blocks=config.max_blocks,
-            block_mask=act_tokens_pattern,
+            block_mask=act_head_tokens_pattern,
             head_module=nn.Sequential(
                 nn.Linear(config.embed_dim, config.embed_dim),
                 nn.ReLU(),
