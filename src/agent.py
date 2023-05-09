@@ -30,16 +30,16 @@ class Agent(nn.Module):
         # if load_actor_critic:
         #     self.actor_critic.load_state_dict(extract_state_dict(agent_state_dict, 'actor_critic'))
 
-    def reset(self, obs: torch.ByteTensor):
+    def reset(self, obs: torch.ByteTensor, actions: torch.LongTensor):
         self.keys_values_wm = None
         if obs is not None:
-            self.refresh_keys_values_with_initial_obs(obs)
+            self.refresh_keys_values_with_initial_obs(obs, actions)
 
     def clear(self):
         self.keys_values_wm = None
 
     @torch.no_grad()
-    def refresh_keys_values_with_initial_obs(self, obs: torch.ByteTensor) -> torch.FloatTensor:
+    def refresh_keys_values_with_initial_obs(self, obs: torch.ByteTensor, actions: torch.LongTensor) -> torch.FloatTensor:
         # n, num_observations_tokens = obs.shape
         n, L = obs.shape[0: 2]
         # assert num_observations_tokens == self.num_observations_tokens
@@ -47,7 +47,16 @@ class Agent(nn.Module):
 
         B = n
         obs_vectors_mapped = self.world_model.obs_to_vectors(obs)
-        sequences = obs_vectors_mapped.view(B, L*self.world_model.config.tokens_per_block-1, self.world_model.embed_dim)
+
+        if actions is None:
+            sequences = obs_vectors_mapped.view(B, L*self.world_model.config.tokens_per_block-1, self.world_model.embed_dim)
+        else:
+            assert obs_vectors_mapped.ndim == 4
+            # obs_vecs: B, L, N(16), E(256)
+            act_vec = self.world_model.act_embedder(actions) # shape: B, L, D
+            act_vec = act_vec.view(B, L, 1, self.embed_dim)
+            sequences = torch.cat((obs_vectors_mapped, act_vec), dim=2)
+            sequences = sequences.view(B, L*self.world_model.config.tokens_per_block, self.world_model.embed_dim)
 
         outputs_wm = self.world_model(sequences, past_keys_values=self.keys_values_wm)
         return outputs_wm.output_sequence  # (B, K, E)
