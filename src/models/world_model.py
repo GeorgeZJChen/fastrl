@@ -43,7 +43,10 @@ class WorldModel(nn.Module):
         all_but_last_obs_tokens_pattern[-2] = 0 # why but last obs, a walkaround for actor_critic.imagine
         act_tokens_pattern = torch.zeros(self.config.tokens_per_block)
         act_tokens_pattern[-2] = 1
-        obs_tokens_pattern = 1 - act_tokens_pattern
+        obs_tokens_pattern = torch.ones(self.config.tokens_per_block)
+        obs_tokens_pattern[-1] = 0
+        reward_tokens_pattern = torch.zeros(self.config.tokens_per_block)
+        reward_tokens_pattern[-1] = 1
 
         self.embed_dim = config.embed_dim
 
@@ -71,7 +74,7 @@ class WorldModel(nn.Module):
 
         self.head_rewards = Head(
             max_blocks=config.max_blocks,
-            block_mask=act_tokens_pattern,
+            block_mask=reward_tokens_pattern,
             head_module=nn.Sequential(
                 nn.Linear(config.embed_dim, config.embed_dim),
                 nn.ReLU(),
@@ -81,7 +84,7 @@ class WorldModel(nn.Module):
 
         self.head_ends = Head(
             max_blocks=config.max_blocks,
-            block_mask=act_tokens_pattern,
+            block_mask=reward_tokens_pattern,
             head_module=nn.Sequential(
                 nn.Linear(config.embed_dim, config.embed_dim),
                 nn.ReLU(),
@@ -101,7 +104,7 @@ class WorldModel(nn.Module):
 
         self.head_values = Head(
             max_blocks=config.max_blocks,
-            block_mask=act_tokens_pattern,
+            block_mask=reward_tokens_pattern,
             head_module=nn.Sequential(
                 nn.Linear(config.embed_dim, config.embed_dim),
                 nn.ReLU(),
@@ -121,9 +124,9 @@ class WorldModel(nn.Module):
         B = obs.size(0)
         L = obs.size(1)
         obs = obs.view(B*L, obs.size(2), obs.size(3), obs.size(4))
-        obs_vector = self.world_model.vectoriser(obs)
-        obs_vectors = obs_vector.view(B, L, self.world_model.config.tokens_per_block-1, self.world_model.vec_size)
-        obs_vectors_mapped = self.world_model.obs_map(obs_vectors)
+        obs_vector = self.vectoriser(obs)
+        obs_vectors = obs_vector.view(B, L, self.config.tokens_per_block-1, self.vec_size)
+        obs_vectors_mapped = self.obs_map(obs_vectors)
         return obs_vectors_mapped
 
     # def forward(self, tokens: torch.LongTensor, past_keys_values: Optional[KeysValues] = None) -> WorldModelOutput:
