@@ -52,7 +52,7 @@ class Collector:
         if burnin_obs is not None:
             agent.reset(burnin_obs, burnin_actions)
         else:
-            agent.reset(None, None, batch_size=self.obs.size(0))
+            agent.reset(None, None, batch_size=self.obs.shape[0])
         pbar = tqdm(total=num_steps if num_steps is not None else num_episodes, desc=f'Experience collection ({self.dataset.name})', file=sys.stdout)
 
         while not should_stop(steps, episodes):
@@ -99,7 +99,7 @@ class Collector:
                 self.obs = self.env.reset()
                 self.episode_ids = [None] * self.env.num_envs
                 # agent.actor_critic.reset(n=self.env.num_envs)
-                agent.reset(None, None, self.obs.size(0))
+                agent.reset(None, None, self.obs.shape[0])
                 observations, actions, rewards, dones = [], [], [], []
 
         # Add incomplete episodes to dataset, and complete them later.

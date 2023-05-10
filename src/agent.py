@@ -65,7 +65,7 @@ class Agent(nn.Module):
 
     @torch.no_grad()
     def act_transformer(self, obs: torch.ByteTensor, should_sample: bool = True, temperature: float = 1.0) -> torch.LongTensor:
-        print('>>> TODO: add history sequence for collector')
+        # print('>>> TODO: add history sequence for collector')
         # assert self.keys_values_wm is not None
         # should first refresh_keys_values_with_initial_obs
         obs = obs.unsqueeze(1)
