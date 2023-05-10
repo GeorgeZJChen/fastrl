@@ -30,8 +30,10 @@ class Agent(nn.Module):
         # if load_actor_critic:
         #     self.actor_critic.load_state_dict(extract_state_dict(agent_state_dict, 'actor_critic'))
 
-    def reset(self, obs: torch.ByteTensor, actions: torch.LongTensor):
-        self.keys_values_wm = None
+    def reset(self, obs: torch.ByteTensor, actions: torch.LongTensor, batch_size: int = None):
+        assert batch_size is not None or obs is not None
+        if obs is None:
+            self.keys_values_wm = self.world_model.transformer.generate_empty_keys_values(n=batch_size, max_tokens=self.world_model.config.max_tokens)
         if obs is not None:
             self.refresh_keys_values_with_initial_obs(obs, actions)
 
@@ -63,6 +65,7 @@ class Agent(nn.Module):
 
     @torch.no_grad()
     def act_transformer(self, obs: torch.ByteTensor, should_sample: bool = True, temperature: float = 1.0) -> torch.LongTensor:
+        print('>>> TODO: add history sequence for collector')
         # assert self.keys_values_wm is not None
         # should first refresh_keys_values_with_initial_obs
         obs = obs.unsqueeze(1)
@@ -78,8 +81,8 @@ class Agent(nn.Module):
         act_token = Categorical(logits=logits_actions).sample() if should_sample else logits_actions.argmax(dim=-1)
 
         # update kv_cache for action token
-        act_token = act_token.view(B, L)
-        act_vec = self.world_model.actions_to_vectors(act_token)
+        actions = act_token.view(B, L)
+        act_vec = self.world_model.actions_to_vectors(actions)
 
         sequences = act_vec.view(B, 1, self.world_model.embed_dim)
 

@@ -132,6 +132,7 @@ class WorldModel(nn.Module):
         return obs_vectors_mapped
 
     def actions_to_vectors(self, actions: torch.LongTensor):
+        B, L = actions.shape
         act_vec = self.act_embedder(actions) # shape: B, L, D
         act_vec = act_vec.view(B, L, 1, self.embed_dim)
         return act_vec
