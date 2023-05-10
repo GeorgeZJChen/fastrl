@@ -54,13 +54,14 @@ class Agent(nn.Module):
             assert obs_vectors_mapped.ndim == 4
             # obs_vecs: B, L, N(16), E(256)
             act_vec = self.world_model.act_embedder(actions) # shape: B, L, D
-            act_vec = act_vec.view(B, L, 1, self.embed_dim)
+            act_vec = act_vec.view(B, L, 1, self.world_model.embed_dim)
             sequences = torch.cat((obs_vectors_mapped, act_vec), dim=2)
             sequences = sequences.view(B, L*self.world_model.config.tokens_per_block, self.world_model.embed_dim)
 
         outputs_wm = self.world_model(sequences, past_keys_values=self.keys_values_wm)
         return outputs_wm.output_sequence  # (B, K, E)
 
+    @torch.no_grad()
     def act_transformer(self, obs: torch.ByteTensor, should_sample: bool = True, temperature: float = 1.0) -> torch.LongTensor:
         # assert self.keys_values_wm is not None
         # should first refresh_keys_values_with_initial_obs

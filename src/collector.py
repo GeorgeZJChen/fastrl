@@ -37,7 +37,7 @@ class Collector:
         returns = []
         observations, actions, rewards, dones = [], [], [], []
 
-        burnin_obs, mask_padding = None, None
+        burnin_obs, burnin_actions, mask_padding = None, None, None
         if set(self.episode_ids) != {None} and burn_in > 0:
             current_episodes = [self.dataset.get_episode(episode_id) for episode_id in self.episode_ids]
             segmented_episodes = [episode.segment(start=len(episode) - burn_in, stop=len(episode), should_pad=True) for episode in current_episodes]
