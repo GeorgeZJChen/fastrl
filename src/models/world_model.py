@@ -131,6 +131,11 @@ class WorldModel(nn.Module):
         obs_vectors_mapped = self.obs_map(obs_vectors)
         return obs_vectors_mapped
 
+    def actions_to_vectors(self, actions: torch.LongTensor):
+        act_vec = self.act_embedder(actions) # shape: B, L, D
+        act_vec = act_vec.view(B, L, 1, self.embed_dim)
+        return act_vec
+
     # def forward(self, tokens: torch.LongTensor, past_keys_values: Optional[KeysValues] = None) -> WorldModelOutput:
     def forward(self, sequences: torch.FloatTensor, past_keys_values: Optional[KeysValues] = None) -> WorldModelOutput:
 
@@ -138,6 +143,8 @@ class WorldModel(nn.Module):
         num_steps = sequences.size(1)  # (B, T)
         assert num_steps <= self.config.max_tokens
         prev_steps = 0 if past_keys_values is None else past_keys_values.size
+        if prev_steps + num_steps > self.config.max_tokens:
+            prev_steps -= self.config.max_tokens
 
         # sequences = self.embedder(tokens, num_steps, prev_steps) + self.pos_emb(prev_steps + torch.arange(num_steps, device=tokens.device))
 
@@ -199,9 +206,7 @@ class WorldModel(nn.Module):
 
         obs_vectors_mapped = self.obs_to_vectors(obs)
 
-        act_tokens = batch['actions']
-        act_vec = self.act_embedder(act_tokens) # shape: B, L, D
-        act_vec = act_vec.view(B, L, 1, self.embed_dim)
+        act_vec = self.actions_to_vectors(batch['actions'])
 
         sequences = torch.cat((obs_vectors_mapped, act_vec), dim=2)
         sequences = sequences.view(B, L*self.config.tokens_per_block, self.embed_dim)

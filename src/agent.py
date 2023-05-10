@@ -76,6 +76,15 @@ class Agent(nn.Module):
 
         logits_actions = outputs.logits_actions[:, -1] / temperature
         act_token = Categorical(logits=logits_actions).sample() if should_sample else logits_actions.argmax(dim=-1)
+
+        # update kv_cache for action token
+        act_token = act_token.view(B, L)
+        act_vec = self.world_model.actions_to_vectors(act_token)
+
+        sequences = act_vec.view(B, 1, self.world_model.embed_dim)
+
+        _ = self.world_model(sequences, past_keys_values=self.keys_values_wm)
+
         return act_token
 
     def act(self, obs: torch.FloatTensor, should_sample: bool = True, temperature: float = 1.0) -> torch.LongTensor:

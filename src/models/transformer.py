@@ -50,7 +50,7 @@ class Transformer(nn.Module):
 
         if past_keys_values is not None:
             if past_keys_values.size + sequences.size(1) > past_keys_values.max_tokens:
-                shift = past_keys_values.size + sequences.size(1) - past_keys_values.max_tokens
+                shift = self.config.tokens_per_block
                 past_keys_values.shift_left(shift)
 
         x = self.drop(sequences)
