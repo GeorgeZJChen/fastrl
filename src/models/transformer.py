@@ -47,6 +47,12 @@ class Transformer(nn.Module):
 
     def forward(self, sequences: torch.Tensor, past_keys_values: Optional[KeysValues] = None) -> torch.Tensor:
         assert past_keys_values is None or len(past_keys_values) == len(self.blocks)
+
+        if past_keys_values is not None:
+            if past_keys_values.size + sequences.size(1) > past_keys_values.max_tokens:
+                shift = past_keys_values.size + sequences.size(1) - past_keys_values.max_tokens
+                past_keys_values.shift_left(shift)
+
         x = self.drop(sequences)
         for i, block in enumerate(self.blocks):
             x = block(x, None if past_keys_values is None else past_keys_values[i])

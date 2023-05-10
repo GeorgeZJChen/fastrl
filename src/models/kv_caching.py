@@ -25,6 +25,13 @@ class Cache:
         self._cache = self._cache[mask]
         self._n = self._cache.shape[0]
 
+    # shift the sequence to the left to make empty spaces
+    def shift_left(self, n):
+        old_size = self._size
+        new_size = old_size - n
+        self._cache[:, :, 0 : new_size] = self._cache[:, :, n : old_size]
+        self._size = new_size
+
     def get(self) -> torch.Tensor:
         return self._cache[:, :, :self._size, :]
 
@@ -52,6 +59,11 @@ class KVCache:
         self._k_cache.prune(mask)
         self._v_cache.prune(mask)
 
+    # shift the sequence to the left to make empty spaces
+    def shift_left(self, n):
+        self._k_cache.shift_left(n)
+        self._v_cache.shift_left(n)
+
     def get(self) -> Tuple[torch.Tensor, torch.Tensor]:
         return self._k_cache.get(), self._v_cache.get()
 
@@ -63,6 +75,7 @@ class KVCache:
 class KeysValues:
     def __init__(self, n: int, num_heads: int, max_tokens: int, embed_dim: int, num_layers: int, device: torch.device) -> None:
         self._keys_values = tuple([KVCache(n, num_heads, max_tokens, embed_dim, device) for _ in range(num_layers)])
+        self.max_tokens = max_tokens
 
     def __getitem__(self, key: int) -> KVCache:
         return self._keys_values[key]
@@ -81,6 +94,11 @@ class KeysValues:
     def prune(self, mask: np.ndarray) -> None:
         for kv_cache in self._keys_values:
             kv_cache.prune(mask)
+
+    # shift the sequence to the left to make empty spaces
+    def shift_left(self, n):
+        for kv_cache in self._keys_values:
+            kv_cache.shift_left(n)
 
 
 class AssignWithoutInplaceCheck(torch.autograd.Function):
