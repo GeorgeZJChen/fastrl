@@ -159,7 +159,7 @@ class WorldModel(nn.Module):
 
         slice_steps = prev_steps
         if slice_steps + num_steps > self.config.max_tokens:
-            slice_steps -= self.config.max_tokens
+            slice_steps = slice_steps % self.config.max_tokens
 
         logits_observations = self.head_observations(x, num_steps=num_steps, prev_steps=slice_steps)
         logits_rewards = self.head_rewards(x, num_steps=num_steps, prev_steps=slice_steps)

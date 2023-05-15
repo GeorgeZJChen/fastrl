@@ -40,6 +40,7 @@ class Agent(nn.Module):
 
     def clear(self):
         self.keys_values_wm = None
+        self.prev_steps = 0
 
     @torch.no_grad()
     def refresh_keys_values_with_initial_obs(self, obs: torch.ByteTensor, actions: torch.LongTensor) -> torch.FloatTensor:
