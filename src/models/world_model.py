@@ -52,7 +52,7 @@ class WorldModel(nn.Module):
 
         self.embed_dim = config.embed_dim
 
-        self.pos_emb = nn.Embedding(config.max_tokens, config.embed_dim)
+        self.pos_emb = nn.Embedding(config.max_tokens*2, config.embed_dim)
         self.act_embedder = nn.Embedding(act_vocab_size, config.embed_dim)
 
         self.embedder = Embedder(
@@ -148,6 +148,11 @@ class WorldModel(nn.Module):
             prev_steps -= self.config.max_tokens
 
         # sequences = self.embedder(tokens, num_steps, prev_steps) + self.pos_emb(prev_steps + torch.arange(num_steps, device=tokens.device))
+
+        print('>>> DEBUG prev_steps', prev_steps)
+
+        pos = torch.remainder(prev_steps + torch.arange(num_steps, device=sequences.device), self.max_tokens*2)
+        sequences = sequences + self.pos_emb(pos)
 
         x = self.transformer(sequences, past_keys_values)
 
