@@ -32,6 +32,7 @@ class Agent(nn.Module):
 
     def reset(self, obs: torch.ByteTensor, actions: torch.LongTensor, batch_size: int = None):
         assert batch_size is not None or obs is not None
+        self.prev_steps = 0
         if obs is None:
             self.keys_values_wm = self.world_model.transformer.generate_empty_keys_values(n=batch_size, max_tokens=self.world_model.config.max_tokens)
         if obs is not None:
@@ -60,7 +61,9 @@ class Agent(nn.Module):
             sequences = torch.cat((obs_vectors_mapped, act_vec), dim=2)
             sequences = sequences.view(B, L*self.world_model.config.tokens_per_block, self.world_model.embed_dim)
 
-        outputs_wm = self.world_model(sequences, past_keys_values=self.keys_values_wm)
+        assert self.prev_steps == 0
+        outputs_wm = self.world_model(sequences, past_keys_values=self.keys_values_wm, prev_steps=self.prev_steps)
+        self.prev_steps += sequences.size(1)
         return outputs_wm.output_sequence  # (B, K, E)
 
     @torch.no_grad()
@@ -75,7 +78,8 @@ class Agent(nn.Module):
         sequences = obs_vectors_mapped.view(B, L*self.world_model.config.tokens_per_block-1, self.world_model.embed_dim)
 
         # TODO: should pass obs vectors one by one?
-        outputs = self.world_model(sequences, past_keys_values=self.keys_values_wm)
+        outputs = self.world_model(sequences, past_keys_values=self.keys_values_wm, prev_steps=self.prev_steps)
+        self.prev_steps += sequences.size(1)
 
         logits_actions = outputs.logits_actions[:, -1] / temperature
         act_token = Categorical(logits=logits_actions).sample() if should_sample else logits_actions.argmax(dim=-1)
@@ -86,7 +90,8 @@ class Agent(nn.Module):
 
         sequences = act_vec.view(B, 1, self.world_model.embed_dim)
 
-        _ = self.world_model(sequences, past_keys_values=self.keys_values_wm)
+        _ = self.world_model(sequences, past_keys_values=self.keys_values_wm, prev_steps=self.prev_steps)
+        self.prev_steps += sequences.size(1)
 
         return act_token
 

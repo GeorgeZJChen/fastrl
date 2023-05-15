@@ -14,6 +14,7 @@ from .vectoriser import Vectoriser
 from .transformer import Transformer, TransformerConfig
 from utils import init_weights, LossWithIntermediateLosses, compute_lambda_returns
 from torch.distributions.categorical import Categorical
+import numpy as np
 
 def to_float(t):
     return float(t.detach().cpu().numpy())
@@ -55,11 +56,11 @@ class WorldModel(nn.Module):
         self.pos_emb = nn.Embedding(config.max_tokens*2, config.embed_dim)
         self.act_embedder = nn.Embedding(act_vocab_size, config.embed_dim)
 
-        self.embedder = Embedder(
-            max_blocks=config.max_blocks,
-            block_masks=[act_tokens_pattern, obs_tokens_pattern],
-            embedding_tables=nn.ModuleList([self.act_embedder, nn.Embedding(obs_vocab_size, config.embed_dim)])
-        )
+        # self.embedder = Embedder(
+        #     max_blocks=config.max_blocks,
+        #     block_masks=[act_tokens_pattern, obs_tokens_pattern],
+        #     embedding_tables=nn.ModuleList([self.act_embedder, nn.Embedding(obs_vocab_size, config.embed_dim)])
+        # )
 
         self.head_observations = Head(
             max_blocks=config.max_blocks,
@@ -138,29 +139,33 @@ class WorldModel(nn.Module):
         return act_vec
 
     # def forward(self, tokens: torch.LongTensor, past_keys_values: Optional[KeysValues] = None) -> WorldModelOutput:
-    def forward(self, sequences: torch.FloatTensor, past_keys_values: Optional[KeysValues] = None) -> WorldModelOutput:
+    def forward(self, sequences: torch.FloatTensor, past_keys_values: Optional[KeysValues] = None, prev_steps: int = 0) -> WorldModelOutput:
 
         # num_steps = tokens.size(1)  # (B, T)
         num_steps = sequences.size(1)  # (B, T)
         assert num_steps <= self.config.max_tokens
-        prev_steps = 0 if past_keys_values is None else past_keys_values.size
-        if prev_steps + num_steps > self.config.max_tokens:
-            prev_steps -= self.config.max_tokens
+        # prev_steps = 0 if past_keys_values is None else past_keys_values.size
+        # if prev_steps + num_steps > self.config.max_tokens:
+        #     prev_steps -= self.config.max_tokens
 
         # sequences = self.embedder(tokens, num_steps, prev_steps) + self.pos_emb(prev_steps + torch.arange(num_steps, device=tokens.device))
 
         print('>>> DEBUG prev_steps', prev_steps)
 
-        pos = torch.remainder(prev_steps + torch.arange(num_steps, device=sequences.device), self.max_tokens*2)
+        pos = torch.remainder(prev_steps + torch.arange(num_steps, device=sequences.device), self.config.max_tokens*2)
         sequences = sequences + self.pos_emb(pos)
 
         x = self.transformer(sequences, past_keys_values)
 
-        logits_observations = self.head_observations(x, num_steps=num_steps, prev_steps=prev_steps)
-        logits_rewards = self.head_rewards(x, num_steps=num_steps, prev_steps=prev_steps)
-        logits_ends = self.head_ends(x, num_steps=num_steps, prev_steps=prev_steps)
-        logits_actions = self.head_actions(x, num_steps=num_steps, prev_steps=prev_steps)
-        values = self.head_values(x, num_steps=num_steps, prev_steps=prev_steps)
+        slice_steps = prev_steps
+        if slice_steps + num_steps > self.config.max_tokens:
+            slice_steps -= self.config.max_tokens
+
+        logits_observations = self.head_observations(x, num_steps=num_steps, prev_steps=slice_steps)
+        logits_rewards = self.head_rewards(x, num_steps=num_steps, prev_steps=slice_steps)
+        logits_ends = self.head_ends(x, num_steps=num_steps, prev_steps=slice_steps)
+        logits_actions = self.head_actions(x, num_steps=num_steps, prev_steps=slice_steps)
+        values = self.head_values(x, num_steps=num_steps, prev_steps=slice_steps)
 
         return WorldModelOutput(x, logits_observations, logits_rewards, logits_ends, logits_actions, values)
 
@@ -225,7 +230,10 @@ class WorldModel(nn.Module):
         # >>> DEBUG rewards torch.Size([10, 20])
         # >>> DEBUG ends torch.Size([10, 20])
 
-        outputs = self(sequences)
+        max_pos_seq_true_steps = self.config.max_tokens*2 / self.config.tokens_per_block
+        rand_prev_steps = self.config.tokens_per_block * np.random.randint(0, max_pos_seq_true_steps)
+
+        outputs = self(sequences, prev_steps=rand_prev_steps)
 
         labels_rewards, labels_ends = self.compute_labels_world_model_rl(batch['rewards'], batch['ends'], batch['mask_padding'])
 
