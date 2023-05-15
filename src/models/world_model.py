@@ -17,7 +17,7 @@ from torch.distributions.categorical import Categorical
 import numpy as np
 
 def to_float(t):
-    return float(t.detach().cpu().numpy())
+    return round(float(t.detach().cpu().numpy()), 5)
 
 @dataclass
 class WorldModelOutput:
@@ -150,7 +150,6 @@ class WorldModel(nn.Module):
 
         # sequences = self.embedder(tokens, num_steps, prev_steps) + self.pos_emb(prev_steps + torch.arange(num_steps, device=tokens.device))
 
-        print('>>> DEBUG prev_steps', prev_steps)
 
         pos = torch.remainder(prev_steps + torch.arange(num_steps, device=sequences.device), self.config.max_tokens*2)
         sequences = sequences + self.pos_emb(pos)
@@ -160,6 +159,7 @@ class WorldModel(nn.Module):
         slice_steps = prev_steps
         if slice_steps + num_steps > self.config.max_tokens:
             slice_steps = slice_steps % self.config.max_tokens
+        slice_steps = slice_steps % self.config.tokens_per_block
 
         logits_observations = self.head_observations(x, num_steps=num_steps, prev_steps=slice_steps)
         logits_rewards = self.head_rewards(x, num_steps=num_steps, prev_steps=slice_steps)
@@ -281,7 +281,10 @@ class WorldModel(nn.Module):
         loss_values = F.mse_loss(values, lambda_returns)
 
         if self.training_step % 10 == 0:
-            print('>>> Training loss:', 'obs:', to_float(loss_obs), 'entropy:', to_float(entropy))
+            mean_return = lambda_returns.mean()
+            print('>>> Training loss:', 'obs:', to_float(loss_obs),
+                'entropy:', to_float(entropy), 'rewards:', to_float(loss_rewards),
+                'values:', to_float(loss_values), '| mean_return:', to_float(mean_return))
 
         self.training_step += 1
 
